@@ -1,0 +1,48 @@
+{
+  "$schemaVersion": 1,
+  "repo": "owner/repository",
+  "releaseChannel": "releases",
+  "currentVersionSource": {
+    "type": "package.json",
+    "path": "./package.json"
+  },
+  "changelogSource": {
+    "type": "release_notes"
+  },
+  "updateInstructions": {
+    "command": "npm install owner-repository@latest",
+    "docsUrl": "https://github.com/owner/repository#readme"
+  },
+  "issueTemplates": {
+    "bug": {
+      "titlePrefix": "[Bug]",
+      "expectedFields": [
+        "reproductionSteps",
+        "actualResult",
+        "expectedResult",
+        "environment",
+        "logSummary",
+        "attemptedFixes"
+      ]
+    }
+  },
+  "contributionPolicy": {
+    "enabled": true,
+    "protectedPaths": [
+      ".env",
+      "secrets/",
+      "config/private/"
+    ],
+    "maxChangedFiles": 20
+  },
+  "privacyRules": {
+    "redactPatterns": [
+      "ghp_[A-Za-z0-9]+",
+      "sk-[A-Za-z0-9]+"
+    ],
+    "excludePaths": [
+      ".env",
+      "*.pem"
+    ]
+  }
+}
