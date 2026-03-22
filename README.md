@@ -4,7 +4,13 @@
 
 `UDD Kit` is an embeddable runtime for **User-Directed Development**.
 
-Its core job is not "show upgrade notifications". Its core job is to help host products turn real user pain into a closed-loop evolution cycle:
+## Why This Exists
+
+AI has given individuals powerful making capability. When we, as users, have a real need, we can increasingly build or adapt the solution locally instead of waiting for a company platform to filter, prioritize, and schedule it.
+
+We believe product evolution in the AI era will become increasingly user-directed. That is why `UDD Kit` exists.
+
+It helps turn each problem a user encounters into a closed-loop cycle:
 
 - identify problems from real usage
 - diagnose what kind of problem this is
