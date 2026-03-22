@@ -4,6 +4,7 @@ export { prepareIssueDraft, submitIssue } from "./issue.js";
 export { prepareContributionDraft, submitContribution } from "./contribution.js";
 export { defineAdapter, resolveAdapterContext } from "./adapter.js";
 export { UddRuntime, createRuntime } from "./runtime.js";
+export { analyzeIncident, planHealing, healIncident } from "./self-heal.js";
 
 import type {
   HealthLoopHooks,

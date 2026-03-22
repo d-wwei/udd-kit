@@ -118,3 +118,130 @@ npm update udd-kit
 ```
 
 如果没有新增宿主必填能力，就不需要改宿主接入代码。
+
+## 8. Self-Healing 宿主接入示例
+
+下面这个例子展示了宿主如何把三类能力一起接进来：
+
+- `invokeRepairAgent`
+  让宿主自己的 Agent 在本地隔离工作区里改代码
+- 可选的 `UpdateKit provider`
+  如果宿主集成了 `UpdateKit`，优先让它执行上游更新
+- fallback provider
+  如果没有 `UpdateKit`，退回宿主原生更新器或手动更新提示
+
+```ts
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+import { defineAdapter } from "udd-kit/adapter";
+import { createRuntime } from "udd-kit/runtime";
+import type { HookDefinition, RepairAgentRequest, UpdateProvider } from "udd-kit";
+
+const execFileAsync = promisify(execFile);
+
+type HostServices = {
+  runInternalRepairAgent: (request: RepairAgentRequest) => Promise<{
+    ok: boolean;
+    summary: string;
+    changedFiles: string[];
+    patchPreview?: string;
+  }>;
+  maybeCreateUpdateKitProvider: () => UpdateProvider | undefined;
+  runHostUpdate: (targetVersion?: string) => Promise<void>;
+};
+
+export async function runSelfHealing(host: HostServices) {
+  const runtime = await createRuntime({
+    cwd: process.cwd()
+  });
+
+  const hostNativeProvider: UpdateProvider = {
+    kind: "host-native",
+    async isAvailable() {
+      return true;
+    },
+    async plan(request) {
+      return {
+        summary: `Use host-native updater for ${request.targetVersion ?? "latest"}`,
+        targetVersion: request.targetVersion
+      };
+    },
+    async apply(request) {
+      await host.runHostUpdate(request.targetVersion);
+      return {
+        ok: true,
+        version: request.targetVersion,
+        details: "Updated using host-native updater."
+      };
+    }
+  };
+
+  const manualProvider: UpdateProvider = {
+    kind: "manual",
+    async describeManualSteps(request) {
+      return [
+        `Fetch upstream updates for ${request.repo}.`,
+        "Install or merge the updated version into the host environment.",
+        "Re-run the host verification suite."
+      ];
+    }
+  };
+
+  const adapter = defineAdapter({
+    name: "my-host",
+    async getContext() {
+      return {
+        cwd: process.cwd(),
+        appName: "my-host",
+        appVersion: "1.2.3",
+        logs: ["./logs/latest.log"],
+        error: {
+          message: "dependency mismatch during runtime startup"
+        },
+        confirm: async () => true
+      };
+    },
+    async decide(prompt) {
+      if (prompt.kind === "update") {
+        return "update_once";
+      }
+      return "repair_once";
+    },
+    async invokeRepairAgent(request) {
+      return host.runInternalRepairAgent(request);
+    },
+    async getUpdateProviders() {
+      const providers = [
+        host.maybeCreateUpdateKitProvider(),
+        hostNativeProvider,
+        manualProvider
+      ].filter((value): value is UpdateProvider => Boolean(value));
+      return providers;
+    },
+    async runHook(hook: HookDefinition, cwd: string) {
+      const command = hook.command ?? "true";
+      const { stdout } = await execFileAsync("sh", ["-lc", command], { cwd });
+      return {
+        ok: true,
+        output: stdout.trim()
+      };
+    }
+  });
+
+  const result = await runtime.heal(adapter, {
+    auth: process.env.GITHUB_TOKEN ? { token: process.env.GITHUB_TOKEN } : undefined,
+    submitIssueOnEscalation: true,
+    createPr: true
+  });
+
+  return result;
+}
+```
+
+接入约定建议如下：
+
+- 如果宿主接了 `UpdateKit`，就把它包装成 `kind: "update-kit"` 的 provider 放在最前面
+- 如果宿主没接 `UpdateKit`，仍然可以只提供 `host-native` 或 `manual` provider
+- `UDDKit` 会按 manifest 里的 `updateStrategyOrder` 选择 provider
+- `invokeRepairAgent` 只负责改代码，验证、PR、issue、状态和审计都仍由 `UDDKit` 统一编排

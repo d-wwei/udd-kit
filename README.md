@@ -5,6 +5,7 @@
 - 检查 GitHub 仓库更新，并向用户提示升级
 - 采集错误、日志和环境信息，生成脱敏 issue 草稿
 - 识别本地修复，生成分支、commit、PR 草稿并在确认后提交
+- 编排自愈流程：诊断、Agent 修复、可选 Update Provider、验证、PR / issue 分流
 
 核心设计原则只有一句话：
 
@@ -70,6 +71,10 @@ if (update.shouldNotify) {
 
 ```bash
 udd check --manifest ./udd.config.json
+udd analyze --manifest ./udd.config.json --error "Request failed"
+udd heal --manifest ./udd.config.json --error "Request failed" --decision repair_once
+udd state --manifest ./udd.config.json
+udd audit --manifest ./udd.config.json --limit 20
 udd issue-draft --manifest ./udd.config.json --error "Request failed" --log ./logs/latest.log
 udd contribute-draft --manifest ./udd.config.json --summary "Fixed retry loop"
 udd ignore --manifest ./udd.config.json --version 1.2.3
@@ -89,6 +94,17 @@ agent-upgrade check --manifest ./agent-upgrade.json
   适合宿主接入，只暴露稳定 adapter 接口
 - `udd-kit/runtime`
   适合宿主调用的 runtime 类和工厂方法
+
+## Self-Healing APIs
+
+- `runtime.analyze(adapter)`
+  诊断 incident 并给出建议修复策略
+- `runtime.planHeal(adapter)`
+  生成自愈计划，包括策略和可选 Update Provider
+- `runtime.heal(adapter)`
+  执行完整自愈闭环，并产出 repaired / escalated / skipped 结果
+- `runtime.getState(adapter)` / `runtime.getAudit(adapter)`
+  查询持久状态和审计记录
 
 ## Integration Guide
 

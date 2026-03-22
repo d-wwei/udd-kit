@@ -1,6 +1,17 @@
 export type ReleaseChannel = "releases" | "tags";
 export type ChangelogSourceType = "release_notes" | "changelog_file" | "compare_commits";
 export type VersionSourceType = "package.json" | "pyproject.toml" | "file" | "literal";
+export type ProblemKind = "code_bug" | "config_error" | "dependency_drift" | "upstream_update" | "unknown";
+export type RepairStrategy = "agent_patch" | "upstream_update" | "host_native_fix" | "manual_update" | "issue_only";
+export type UpdateProviderKind = "update-kit" | "host-native" | "manual";
+export type UddDecision =
+  | "repair_once"
+  | "always_auto_repair_safe"
+  | "update_once"
+  | "always_auto_update_safe"
+  | "skip_this_time"
+  | "ignore_this_version"
+  | "issue_only";
 
 export type CurrentVersionSource = {
   type: VersionSourceType;
@@ -39,13 +50,42 @@ export type UpgradeManifest = {
     redactPatterns?: string[];
     excludePaths?: string[];
   };
+  selfHealing?: {
+    enabled: boolean;
+    strategyOrder?: RepairStrategy[];
+    updateStrategyOrder?: UpdateProviderKind[];
+    fallbackToIssue?: boolean;
+    workspaceMode?: "git_worktree" | "inline";
+    approvalMode?: "manual" | "safe_auto";
+    maxAttempts?: number;
+    autoSubmitPr?: boolean;
+    draftPrByDefault?: boolean;
+  };
+  repair?: {
+    allowPaths?: string[];
+    protectedPaths?: string[];
+    maxFilesChanged?: number;
+  };
+  hooks?: {
+    preflight?: HookDefinition[];
+    verification?: HookDefinition[];
+    smoke?: HookDefinition[];
+    compatibility?: HookDefinition[];
+  };
+  state?: {
+    path?: string;
+  };
+  audit?: {
+    path?: string;
+  };
 };
 
 export type ConfirmationPrompt = {
-  kind: "issue" | "contribution" | "github-write";
+  kind: "issue" | "contribution" | "github-write" | "repair" | "update";
   title: string;
   summary: string;
   preview?: string;
+  options?: UddDecision[];
 };
 
 export type HostError = {
@@ -61,6 +101,16 @@ export type HostContext = {
   logs?: string[];
   error?: HostError;
   metadata?: Record<string, string | number | boolean | null | undefined>;
+  git?: {
+    branch?: string;
+    head?: string;
+    changedFiles?: string[];
+  };
+  upstream?: {
+    currentVersion?: string;
+    latestVersion?: string;
+    hasUpdate?: boolean;
+  };
   confirm: (prompt: ConfirmationPrompt) => Promise<boolean>;
 };
 
@@ -71,6 +121,14 @@ export type AdapterContextOverrides = Partial<Omit<HostContext, "confirm">> & {
 export type UddAdapter = {
   name: string;
   getContext: (overrides?: AdapterContextOverrides) => Promise<HostContext> | HostContext;
+  decide?: (prompt: ConfirmationPrompt) => Promise<UddDecision>;
+  runCommand?: (cmd: string[], cwd: string) => Promise<string>;
+  invokeRepairAgent?: (request: RepairAgentRequest) => Promise<RepairAgentResult>;
+  runHook?: (hook: HookDefinition, cwd: string) => Promise<HookExecutionResult>;
+  getUpdateProviders?: () => Promise<UpdateProvider[]> | UpdateProvider[];
+  readState?: () => Promise<UddPersistentState | undefined>;
+  writeState?: (state: UddPersistentState) => Promise<void>;
+  writeAudit?: (record: AuditRecord) => Promise<void>;
 };
 
 export type GithubAuth = {
@@ -167,3 +225,160 @@ export type HealthLoopHooks = {
   onIssueDraft?: (draft: IssueDraft) => Promise<void> | void;
   onContributionDraft?: (draft: ContributionDraft) => Promise<void> | void;
 };
+
+export type HookDefinition = {
+  name: string;
+  command?: string;
+  timeoutMs?: number;
+  required?: boolean;
+  cwd?: string;
+};
+
+export type HookExecutionResult = {
+  ok: boolean;
+  output?: string;
+};
+
+export type Diagnosis = {
+  kind: ProblemKind;
+  confidence: number;
+  summary: string;
+  suggestedStrategies: RepairStrategy[];
+  evidence: string[];
+};
+
+export type UpdateRequest = {
+  repo: string;
+  currentVersion?: string;
+  targetVersion?: string;
+  cwd: string;
+  reason: string;
+};
+
+export type UpdateProviderPlan = {
+  summary: string;
+  targetVersion?: string;
+};
+
+export type UpdateProviderApplyResult = {
+  ok: boolean;
+  version?: string;
+  details?: string;
+};
+
+export type UpdateProvider = {
+  kind: UpdateProviderKind;
+  isAvailable?: () => Promise<boolean> | boolean;
+  plan?: (request: UpdateRequest) => Promise<UpdateProviderPlan>;
+  apply?: (request: UpdateRequest) => Promise<UpdateProviderApplyResult>;
+  describeManualSteps?: (request: UpdateRequest) => Promise<string[]>;
+};
+
+export type RepairAgentRequest = {
+  incident: HostContext;
+  diagnosis: Diagnosis;
+  workspacePath: string;
+  constraints?: {
+    protectedPaths?: string[];
+    maxFilesChanged?: number;
+  };
+};
+
+export type RepairAgentResult = {
+  ok: boolean;
+  summary: string;
+  changedFiles: string[];
+  patchPreview?: string;
+};
+
+export type VerificationStepResult = {
+  name: string;
+  ok: boolean;
+  output?: string;
+};
+
+export type VerificationStageResult = {
+  stage: "preflight" | "verification" | "smoke" | "compatibility";
+  steps: VerificationStepResult[];
+};
+
+export type VerificationResult = {
+  ok: boolean;
+  stages: VerificationStageResult[];
+  failedStep?: string;
+};
+
+export type HealPlan = {
+  incident: HostContext;
+  diagnosis: Diagnosis;
+  strategy: RepairStrategy;
+  updateProviderKind?: UpdateProviderKind;
+  manualUpdateSteps?: string[];
+  updateTargetVersion?: string;
+};
+
+export type AuditRecord = {
+  id: string;
+  ts: string;
+  appName: string;
+  repo?: string;
+  fromVersion?: string;
+  toVersion?: string;
+  step:
+    | "incident_collected"
+    | "diagnosis_completed"
+    | "decision_recorded"
+    | "repair_started"
+    | "update_started"
+    | "verification_completed"
+    | "rollback_completed"
+    | "pr_created"
+    | "issue_created";
+  status: "ok" | "failed" | "skipped";
+  message: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type UddPersistentState = {
+  preferredDecision?: Extract<UddDecision, "always_auto_repair_safe" | "always_auto_update_safe">;
+  ignoredVersions?: string[];
+  lastHeal?: {
+    status: "repaired" | "escalated" | "skipped";
+    strategy?: RepairStrategy;
+    summary: string;
+    ts: string;
+  };
+};
+
+export type HealOptions = AdapterContextOverrides & {
+  auth?: GithubAuth;
+  submitIssueOnEscalation?: boolean;
+  createPr?: boolean;
+};
+
+export type HealResult =
+  | {
+      status: "repaired";
+      summary: string;
+      strategy: RepairStrategy;
+      diagnosis: Diagnosis;
+      verification: VerificationResult;
+      contribution: ContributionDraft;
+      branchUrl?: string;
+      prUrl?: string;
+    }
+  | {
+      status: "escalated";
+      summary: string;
+      strategy: RepairStrategy;
+      diagnosis: Diagnosis;
+      issueDraft: IssueDraft;
+      issueUrl?: string;
+    }
+  | {
+      status: "skipped";
+      summary: string;
+      strategy: RepairStrategy;
+      diagnosis: Diagnosis;
+      manualUpdateSteps?: string[];
+    };

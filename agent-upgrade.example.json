@@ -44,5 +44,50 @@
       ".env",
       "*.pem"
     ]
+  },
+  "selfHealing": {
+    "enabled": true,
+    "strategyOrder": [
+      "agent_patch",
+      "upstream_update",
+      "issue_only"
+    ],
+    "updateStrategyOrder": [
+      "update-kit",
+      "host-native",
+      "manual"
+    ],
+    "fallbackToIssue": true,
+    "workspaceMode": "git_worktree",
+    "approvalMode": "manual",
+    "maxAttempts": 2,
+    "autoSubmitPr": true
+  },
+  "repair": {
+    "protectedPaths": [
+      ".env",
+      "secrets/"
+    ],
+    "maxFilesChanged": 20
+  },
+  "hooks": {
+    "preflight": [
+      {
+        "name": "install",
+        "command": "npm ci"
+      }
+    ],
+    "verification": [
+      {
+        "name": "test",
+        "command": "npm test"
+      }
+    ]
+  },
+  "state": {
+    "path": ".udd/state.json"
+  },
+  "audit": {
+    "path": ".udd/audit.jsonl"
   }
 }

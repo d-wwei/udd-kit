@@ -21,8 +21,16 @@ export async function prepareContributionDraft(
 ): Promise<ContributionDraft> {
   const { owner, repo } = splitRepo(manifest.repo);
   const changedFiles = await gitLines(["status", "--short"], ctx.cwd);
+  const internalPaths = new Set(
+    [
+      ".udd/",
+      manifest.state?.path,
+      manifest.audit?.path
+    ].filter((value): value is string => Boolean(value))
+  );
   const parsedFiles = changedFiles
     .map((line) => line.trim().slice(3))
+    .filter((file) => ![...internalPaths].some((internal) => file === internal || file.startsWith(internal)))
     .filter(Boolean);
   const diffStat = await gitText(["diff", "--stat"], ctx.cwd);
   const patchPreview = await gitText(["diff", "--", ...parsedFiles.slice(0, 10)], ctx.cwd);
