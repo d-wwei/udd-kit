@@ -72,18 +72,46 @@ runtime.watch(adapter, { intervalMs: 300_000 });
 
 ## 架构
 
-```
-宿主产品 ──→ UDD Adapter ──→ UDD Runtime
-                                 ├── Incident Collector（事件收集）
-                                 ├── Diagnosis Engine（诊断引擎 + changelog-error 匹配）
-                                 ├── Strategy Selector（策略选择）
-                                 ├── Repair Agent / Update Provider（修复执行）
-                                 ├── Verification Engine（验证引擎）
-                                 ├── Contribution Flow（PR 回馈）
-                                 ├── Issue Escalation Flow（Issue 上报）
-                                 ├── Event Bus（事件总线）
-                                 ├── State Store（状态持久化）
-                                 └── Audit Log（审计日志）
+```mermaid
+flowchart LR
+  Host["宿主产品 / Skill"] --> Adapter["UDD Adapter"]
+  Adapter --> Runtime["UDD Runtime"]
+
+  Runtime --> Incident["Incident Collector"]
+  Runtime --> Diagnose["Diagnosis Engine"]
+  Runtime --> Policy["Policy Engine"]
+  Runtime --> Workspace["Workspace / Isolation"]
+  Runtime --> Verify["Verification Engine"]
+  Runtime --> Audit["Audit Log"]
+  Runtime --> State["State Store"]
+  Runtime --> Events["Event Bus"]
+  Runtime --> Contrib["Contribution / PR Flow"]
+  Runtime --> Issue["Issue Escalation Flow"]
+
+  Diagnose --> Match["Changelog-Error Match"]
+  Match -->|"LLM (adapter)"| SemanticMatch["Semantic Match"]
+  Match -->|"fallback"| TextMatch["Text Match"]
+  Diagnose --> Strategy["Strategy Selector"]
+
+  Strategy --> AgentRepair["Agent Repair Provider"]
+  Strategy --> UpdateBridge["Update Provider Bridge"]
+  Strategy --> ConfigRepair["Host Native Repair"]
+  Strategy --> Manual["Manual Update Guidance"]
+
+  UpdateBridge --> UK["UpdateKit Provider (optional)"]
+  UpdateBridge --> HN["Host Native Update Provider"]
+  UpdateBridge --> MU["Manual Update Provider"]
+
+  AgentRepair --> Workspace
+  ConfigRepair --> Workspace
+  UK --> Verify
+  HN --> Verify
+  MU --> Issue
+
+  Workspace --> Verify
+  Verify -->|pass| Contrib
+  Verify -->|fail| Rollback["Rollback / Cleanup"]
+  Rollback --> Issue
 ```
 
 ## 核心能力

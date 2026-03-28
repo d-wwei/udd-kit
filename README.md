@@ -66,18 +66,46 @@ Error occurs → Collect incident → Diagnose (LLM semantic match or text fallb
 
 ## Architecture
 
-```
-Host Product ──→ UDD Adapter ──→ UDD Runtime
-                                    ├── Incident Collector
-                                    ├── Diagnosis Engine (+ changelog-error matching)
-                                    ├── Strategy Selector
-                                    ├── Repair Agent / Update Provider
-                                    ├── Verification Engine (hooks)
-                                    ├── Contribution Flow (PR)
-                                    ├── Issue Escalation Flow
-                                    ├── Event Bus
-                                    ├── State Store
-                                    └── Audit Log
+```mermaid
+flowchart LR
+  Host["Host App / Skill / Product"] --> Adapter["UDD Adapter"]
+  Adapter --> Runtime["UDD Runtime"]
+
+  Runtime --> Incident["Incident Collector"]
+  Runtime --> Diagnose["Diagnosis Engine"]
+  Runtime --> Policy["Policy Engine"]
+  Runtime --> Workspace["Workspace / Isolation"]
+  Runtime --> Verify["Verification Engine"]
+  Runtime --> Audit["Audit Log"]
+  Runtime --> State["State Store"]
+  Runtime --> Events["Event Bus"]
+  Runtime --> Contrib["Contribution / PR Flow"]
+  Runtime --> Issue["Issue Escalation Flow"]
+
+  Diagnose --> Match["Changelog-Error Match"]
+  Match -->|"LLM (adapter)"| SemanticMatch["Semantic Match"]
+  Match -->|"fallback"| TextMatch["Text Match"]
+  Diagnose --> Strategy["Strategy Selector"]
+
+  Strategy --> AgentRepair["Agent Repair Provider"]
+  Strategy --> UpdateBridge["Update Provider Bridge"]
+  Strategy --> ConfigRepair["Host Native Repair"]
+  Strategy --> Manual["Manual Update Guidance"]
+
+  UpdateBridge --> UK["UpdateKit Provider (optional)"]
+  UpdateBridge --> HN["Host Native Update Provider"]
+  UpdateBridge --> MU["Manual Update Provider"]
+
+  AgentRepair --> Workspace
+  ConfigRepair --> Workspace
+  UK --> Verify
+  HN --> Verify
+  MU --> Issue
+
+  Workspace --> Verify
+  Verify -->|pass| Contrib
+  Verify -->|fail| Rollback["Rollback / Cleanup"]
+  Rollback --> Issue
 ```
 
 ## Key Features
