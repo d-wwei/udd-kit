@@ -17,7 +17,6 @@ import type {
   HealResult,
   HostContext,
   UddAdapter,
-  UddDecision,
   UddPersistentState,
   UpgradeManifest,
   VerificationResult
@@ -74,7 +73,8 @@ async function escalateIssue(
     strategy: "issue_only",
     diagnosis,
     issueDraft,
-    issueUrl
+    issueUrl,
+    recommendation: diagnosis.upstreamFixMatch
   };
 }
 
@@ -85,7 +85,7 @@ export async function analyzeIncident(
 ): Promise<Diagnosis> {
   const { confirm, auth: _auth, submitIssueOnEscalation: _submit, createPr: _createPr, ...overrides } = options;
   const incident = await collectIncidentContext(adapter, manifest, { ...overrides, confirm });
-  return diagnoseIncident(incident, manifest);
+  return diagnoseIncident(incident, manifest, adapter);
 }
 
 export async function planHealing(
@@ -95,7 +95,7 @@ export async function planHealing(
 ): Promise<HealPlan> {
   const { confirm, auth: _auth, submitIssueOnEscalation: _submit, createPr: _createPr, ...overrides } = options;
   const incident = await collectIncidentContext(adapter, manifest, { ...overrides, confirm });
-  const diagnosis = diagnoseIncident(incident, manifest);
+  const diagnosis = await diagnoseIncident(incident, manifest, adapter);
   const strategy = await selectRepairStrategy(adapter, diagnosis, manifest);
 
   let updateProviderKind: HealPlan["updateProviderKind"];
@@ -167,7 +167,8 @@ export async function healIncident(
       summary,
       strategy: plan.strategy,
       diagnosis,
-      manualUpdateSteps: plan.manualUpdateSteps
+      manualUpdateSteps: plan.manualUpdateSteps,
+      recommendation: diagnosis.upstreamFixMatch
     };
   }
 
@@ -200,7 +201,8 @@ export async function healIncident(
       summary: `Ignored version ${plan.updateTargetVersion} for future update prompts.`,
       strategy: plan.strategy,
       diagnosis,
-      manualUpdateSteps: plan.manualUpdateSteps
+      manualUpdateSteps: plan.manualUpdateSteps,
+      recommendation: diagnosis.upstreamFixMatch
     };
   }
 
@@ -219,7 +221,8 @@ export async function healIncident(
       summary,
       strategy: plan.strategy,
       diagnosis,
-      manualUpdateSteps: plan.manualUpdateSteps
+      manualUpdateSteps: plan.manualUpdateSteps,
+      recommendation: diagnosis.upstreamFixMatch
     };
   }
 
@@ -251,7 +254,8 @@ export async function healIncident(
       summary,
       strategy: plan.strategy,
       diagnosis,
-      manualUpdateSteps: plan.manualUpdateSteps
+      manualUpdateSteps: plan.manualUpdateSteps,
+      recommendation: diagnosis.upstreamFixMatch
     };
   }
 
@@ -292,7 +296,8 @@ export async function healIncident(
           summary: "No executable update provider is available; manual update is required.",
           strategy: plan.strategy,
           diagnosis,
-          manualUpdateSteps: plan.manualUpdateSteps
+          manualUpdateSteps: plan.manualUpdateSteps,
+          recommendation: diagnosis.upstreamFixMatch
         };
       }
       await writeAuditRecord(adapter, manifest, incident, {
@@ -398,7 +403,8 @@ export async function healIncident(
       verification,
       contribution,
       branchUrl,
-      prUrl
+      prUrl,
+      recommendation: diagnosis.upstreamFixMatch
     };
   } finally {
     await workspace.cleanup();

@@ -2,239 +2,161 @@
 
 [English README](./README.md)
 
-`UDD Kit` 是一个可嵌入到宿主产品中的 **用户主导开发（User-Directed Development）运行时**。
+**UDD Kit** 是一个面向 AI Agent 生态的自愈运行时。它检测故障、匹配上游修复、尝试自动修复、并把修复回馈上游。
 
-## 为什么打造这个东西
+UDD = **User-Directed Development（用户主导开发）** -- 软件演进由用户和他们的 Agent 驱动，而不只是公司路线图。
 
-AI 时代赋予了每个人强大的造物能力。当作为用户的我们有任何真实需求时，都可以优先在本地实现或改造，而不必再等待公司平台的筛选、排序和排期。
+## 快速开始（Agent 环境 -- 推荐）
 
-我们相信，未来的产品研发一定会越来越由用户主导，这正是 `UDD Kit` 存在的原因。
+对于被 AI Agent 使用的产品（Claude Code、Codex 等），集成 **不需要写任何代码**：
 
-它帮助用户把遇到的每个问题转成一个闭环：
+```bash
+npm install -g udd-kit
+cd /path/to/your/product
+udd init
+```
 
-- 识别问题
-- 诊断问题类型
-- 在本地发起自愈
-- 在受控环境里验证结果
-- 把结果回流到上游，形成 issue 或 PR
+`udd init` 做两件事：
+1. 自动生成 `udd.config.json`（自动检测 repo、语言、版本源）
+2. 直接输出一段填好产品信息的 **Self-Healing Protocol 提示词** -- 复制粘贴到你的 agent 指令文件即可（CLAUDE.md、AGENT_INSTRUCTIONS.md、system prompt 等）
 
-也就是说，`UDD Kit` 的重点是：
+完事。当 agent 遇到故障时，它会派生一个独立的 subagent 来运行 UDD 诊断和修复。
 
-**问题识别 + 本地自愈 + 上游提交**
+### 为什么用 subagent？
 
-在 UDD 里，用户不再只是提需求的人。用户和他背后的 Agent，开始共同主导产品如何演进。
+- **语义匹配精度**：subagent 本身就是 LLM，直接读 changelog 和错误信息做语义判断，比关键词匹配精确得多
+- **递归依赖隔离**：修复 agent 和被修复的产品在不同进程里，不存在"修复工具本身坏了"的问题
+- **零集成代码**：一个 config + 一段提示词，没有 adapter、没有事件监听、没有代码改动
 
-## 什么是 UDD
+## 快速开始（代码集成）
 
-传统软件研发是公司主导的：
+CI/CD 管道、后台监控、Web 服务等无 agent 环境：
 
-1. 用户提反馈
-2. 公司筛选需求
-3. 公司决定优先级和排期
-4. 公司交付版本
+```ts
+import { initUdd } from "udd-kit/quick";
 
-UDD 改变的是控制权：
+const { runtime, adapter } = await initUdd({ name: "my-app" });
 
-1. 用户在真实场景中遇到问题
-2. 宿主产品和 Agent 收集证据
-3. 系统尝试安全的本地修复或更新
-4. 成功的修复再回流为 issue、PR 或生态能力
+// 检查上游是否已经修复了你的问题
+const check = await runtime.check(adapter);
+if (check.upstreamFixMatch) {
+  console.log(check.upstreamFixMatch.recommendation);
+}
 
-`UDD Kit` 就是这条链路的编排层。
+// 订阅事件
+runtime.events.on("update:fixes-local-error", ({ match, update }) => {
+  console.log(`上游 ${update.latestVersion} 修复了这个问题：${match.recommendation}`);
+});
+
+// 后台健康监控
+runtime.watch(adapter, { intervalMs: 300_000 });
+```
 
 ## 核心闭环
 
-`UDD Kit` 围绕这条自愈和回流闭环工作：
-
-1. 收集 incident：错误、日志、环境、git 状态、上游版本状态。
-2. 诊断 incident，并选择修复策略。
-3. 尝试修复，策略可能包括：
-   - 宿主注入的编码 Agent
-   - 可选的 `UpdateKit`
-   - 宿主原生更新能力
-   - 手动更新路径
-4. 在隔离工作区中运行 verification hooks。
-5. 如果验证通过，则准备或提交 PR。
-6. 如果修复失败，则生成脱敏 issue 并向上游回报。
-
-## 架构图
-
-```mermaid
-flowchart LR
-  Host["Host App / Skill / Product"] --> Adapter["UDD Adapter"]
-  Adapter --> Runtime["UDD Runtime"]
-
-  Runtime --> Incident["Incident Collector"]
-  Runtime --> Diagnose["Diagnosis Engine"]
-  Runtime --> Policy["Policy Engine"]
-  Runtime --> Workspace["Workspace / Isolation"]
-  Runtime --> Verify["Verification Engine"]
-  Runtime --> Audit["Audit Log"]
-  Runtime --> State["State Store"]
-  Runtime --> Contrib["Contribution / PR Flow"]
-  Runtime --> Issue["Issue Escalation Flow"]
-
-  Diagnose --> Strategy["Strategy Selector"]
-
-  Strategy --> AgentRepair["Agent Repair Provider"]
-  Strategy --> UpdateBridge["Update Provider Bridge"]
-  Strategy --> ConfigRepair["Host Native Repair"]
-  Strategy --> Manual["Manual Update Guidance"]
-
-  UpdateBridge --> UK["UpdateKit Provider (optional)"]
-  UpdateBridge --> HN["Host Native Update Provider"]
-  UpdateBridge --> MU["Manual Update Provider"]
-
-  AgentRepair --> Workspace
-  ConfigRepair --> Workspace
-  UK --> Verify
-  HN --> Verify
-  MU --> Issue
-
-  Workspace --> Verify
-  Verify -->|pass| Contrib
-  Verify -->|fail| Rollback["Rollback / Cleanup"]
-  Rollback --> Issue
+```
+出错 → 收集 incident → 诊断（LLM 语义匹配 or 文本 fallback）
+  → 选择策略 → 在隔离 worktree 中修复 → 运行验证 hooks
+    → 成功：提交 PR 到上游
+    → 失败：生成脱敏 issue 上报
 ```
 
-## 主要能力
+## 两种集成路径
 
-- 问题识别：采集错误、日志、环境、git 状态和版本状态。
-- 问题诊断：判断更像代码 bug、配置问题、上游更新问题，还是未知问题。
-- 本地自愈：调用宿主注入的 Agent，在隔离工作区里做本地修复。
-- 更新桥接：优先使用 `UpdateKit`，否则退回宿主原生更新器或手动更新提示。
-- 验证与拦截：执行 preflight、test、smoke、compatibility hooks。
-- 上游回流：生成或提交 issue / PR，把修复结果回流到原仓库。
-- 状态与审计：记录决策、忽略版本、最近一次自愈结果和结构化审计日志。
+| | Agent（提示词集成） | 代码集成 |
+|---|---|---|
+| 方式 | `udd init` + 粘贴提示词 | `initUdd()` + adapter 代码 |
+| 语义匹配 | Agent 自身的 LLM 能力 | 内置文本匹配（或 adapter 覆盖） |
+| 递归依赖 | Subagent 天然隔离 | 不适用 |
+| 适用场景 | 被 AI Agent 使用的产品 | CI/CD、定时任务、Web 服务 |
 
-## 为什么还保留“检查 GitHub 仓库更新并提示升级”
+## 架构
 
-这个能力现在仍然保留，但它已经不是 `UDD Kit` 的 headline 功能，而是一个**辅助能力**。
-
-它保留的原因有四个：
-
-1. 它是诊断信号之一。系统需要知道“问题是否可能通过上游更新解决”。
-2. 它是更新策略的入口。当宿主接了 `UpdateKit` 或其他更新器时，版本检查会触发更新修复路径。
-3. 它是兜底路径。即使宿主没有 `UpdateKit`，`UDD Kit` 仍然可以识别“上游变了”，并提醒用户手动 fetch / update / install。
-4. 它仍然有独立价值。有些宿主只需要知道本地是否落后于上游，但不想自动执行更新。
-
-所以更准确的定位应该是：
-
-- `UDD Kit` 的核心是 **识别问题、发起本地自愈、把结果回流到上游**
-- GitHub 更新检查只是这条闭环中的一个诊断输入和一个潜在修复路径
-
-## 安装
-
-```bash
-npm install udd-kit
+```
+宿主产品 ──→ UDD Adapter ──→ UDD Runtime
+                                 ├── Incident Collector（事件收集）
+                                 ├── Diagnosis Engine（诊断引擎 + changelog-error 匹配）
+                                 ├── Strategy Selector（策略选择）
+                                 ├── Repair Agent / Update Provider（修复执行）
+                                 ├── Verification Engine（验证引擎）
+                                 ├── Contribution Flow（PR 回馈）
+                                 ├── Issue Escalation Flow（Issue 上报）
+                                 ├── Event Bus（事件总线）
+                                 ├── State Store（状态持久化）
+                                 └── Audit Log（审计日志）
 ```
 
-## 配置
+## 核心能力
 
-默认 manifest 文件名：
-
-- `udd.config.json`
-
-兼容旧文件名：
-
-- `agent-upgrade.json`
-
-可以从这些示例开始：
-
-- [udd.config.example.json](./udd.config.example.json)
-- [agent-upgrade.example.json](./agent-upgrade.example.json)
-
-## 最小接入示例
-
-```ts
-import { defineAdapter } from "udd-kit/adapter";
-import { createRuntime } from "udd-kit/runtime";
-
-const adapter = defineAdapter({
-  name: "my-host",
-  async getContext() {
-    return {
-      cwd: process.cwd(),
-      appName: "my-host",
-      logs: ["./logs/latest.log"],
-      error: {
-        message: "dependency mismatch during startup"
-      },
-      confirm: async () => true
-    };
-  },
-  async decide(prompt) {
-    if (prompt.kind === "update") return "update_once";
-    return "repair_once";
-  },
-  async invokeRepairAgent(request) {
-    return {
-      ok: true,
-      summary: "patched the failing workflow",
-      changedFiles: ["src/fix.ts"]
-    };
-  }
-});
-
-const runtime = await createRuntime({ cwd: process.cwd() });
-const result = await runtime.heal(adapter);
-
-console.log(result.status);
-```
+- **Changelog-Error 智能匹配**：对比本地错误和上游 release notes，判断问题是否已被上游修复。Agent 环境用 LLM 语义匹配，非 agent 环境用确定性文本匹配 fallback。
+- **自愈闭环**：诊断 → 策略 → 修复 → 验证 → 贡献/上报，全自动。
+- **隔离修复**：所有修复在 git worktree 中进行，验证通过才能提升。
+- **事件系统**：订阅 `update:available`、`update:fixes-local-error`、`heal:completed` 等事件。
+- **Watch 模式**：`runtime.watch()` 后台健康监控，通过事件驱动通知。
+- **隐私保护**：自动脱敏 token、secret、绝对路径，再生成 issue/PR。
+- **零运行时依赖**：完全基于 Node.js 内置模块。
 
 ## CLI
 
-现在最主要的 CLI 命令是自愈相关命令：
-
 ```bash
-udd analyze --manifest ./udd.config.json --error "Request failed"
-udd heal --manifest ./udd.config.json --error "Request failed" --decision repair_once
-udd state --manifest ./udd.config.json
-udd audit --manifest ./udd.config.json --limit 20
+udd init [--repo owner/name] [--force]       # 生成 config + agent 提示词
+udd check [--json]                            # 检查上游更新
+udd analyze --error "msg" [--json]            # 诊断错误
+udd heal --error "msg" --decision repair_once # 完整自愈流程
+udd issue-draft --error "msg" [--out f.md]    # 生成 issue 草稿
+udd contribute-draft --summary "fix" [--out]  # 生成贡献草稿
+udd state [--json]                            # 查看持久化状态
+udd audit [--limit 20] [--json]              # 查看审计记录
 ```
 
-辅助命令仍然保留：
+## Runtime API
 
-```bash
-udd check --manifest ./udd.config.json
-udd issue-draft --manifest ./udd.config.json --error "Request failed" --log ./logs/latest.log
-udd contribute-draft --manifest ./udd.config.json --summary "Fixed retry loop"
-udd ignore --manifest ./udd.config.json --version 1.2.3
+```ts
+runtime.check(adapter)           // 检查上游 + changelog-error 匹配
+runtime.analyze(adapter)         // 诊断 incident
+runtime.planHeal(adapter)        // 预览自愈计划
+runtime.heal(adapter)            // 执行完整自愈闭环
+runtime.watch(adapter, options)  // 后台健康监控
+runtime.events.on(event, fn)     // 订阅事件
+runtime.getState(adapter)        // 读取持久化状态
+runtime.getAudit(adapter)        // 读取审计记录
 ```
 
-兼容旧命令：
+## Adapter 接口
 
-```bash
-agent-upgrade check --manifest ./agent-upgrade.json
+Adapter 负责把宿主环境翻译成 UDD 能理解的上下文。除 `getContext` 外全部可选：
+
+```ts
+import { defineAdapter } from "udd-kit/adapter";
+
+const adapter = defineAdapter({
+  name: "my-app",
+  getContext: () => ({ cwd, appName, error, confirm }),
+
+  // 可选：LLM 语义匹配（agent 环境）
+  matchUpstreamFix: (req) => /* 对比 req.error 和 req.highlights */,
+
+  // 可选：让 agent 在隔离 worktree 中修复代码
+  invokeRepairAgent: (req) => /* return { ok, summary, changedFiles } */,
+
+  // 可选：提供更新策略
+  getUpdateProviders: () => [/* update-kit, host-native, manual */],
+
+  // 可选：自定义决策逻辑
+  decide: (prompt) => /* return UddDecision */,
+});
 ```
 
-## 公开 Runtime API
+## 文档
 
-- `runtime.analyze(adapter)`
-  诊断 incident 并给出修复策略建议
-- `runtime.planHeal(adapter)`
-  生成自愈计划，包括修复策略和可选 Update Provider
-- `runtime.heal(adapter)`
-  执行完整自愈闭环，返回 `repaired` / `escalated` / `skipped`
-- `runtime.getState(adapter)` / `runtime.getAudit(adapter)`
-  读取持久状态和审计记录
-- `runtime.check(adapter)`
-  在宿主需要时检查上游版本漂移
+- [集成指南](./docs/INTEGRATION.md) -- 代码集成详细说明
+- [Agent 指令模板](./docs/AGENT_INSTRUCTIONS.md) -- 提示词集成参考
+- [UDD 设计理念](./docs/UDD-DESIGN-PHILOSOPHY.zh-CN.md)
 
-## 设计理念文档
+## 设计理念
 
-- [UDD 设计理念说明（中文）](./docs/UDD-DESIGN-PHILOSOPHY.zh-CN.md)
+> 软件演进不应停留在"用户反馈，公司决定"的单向模式，而应转向"用户决定方向，Agent 执行建造，平台负责边界治理"的新范式。
 
-这套工具背后的核心观点是：
+## License
 
-> 软件不应再停留在“用户反馈，公司决定”的单向模式，而应该转向“用户决定方向，Agent 执行建造，平台负责边界治理”的新范式。
-
-## 集成说明
-
-- [Integration Guide](./docs/INTEGRATION.md)
-
-## 备注
-
-- GitHub 写操作依然应该经过宿主明确决策。
-- 审计和状态文件默认是宿主本地工件，不应进入 contribution draft。
-- 新能力优先通过 `runtime`、manifest 和 adapter 边界演进，而不是要求宿主重写接入代码。
+MIT

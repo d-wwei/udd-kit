@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 
 import { ignoreVersion, readCache, rememberUpdateCheck } from "./cache.js";
 import { fetchHighlights, fetchLatestRelease, fetchLatestTag } from "./github.js";
+import { matchChangelogToError } from "./match.js";
 import type { CheckForUpdatesOptions, HostContext, UpdateCheckResult, UpgradeManifest } from "./types.js";
 import { defaultCachePath, compareVersions, formatBulletList, normalizeVersion, resolveFromCwd } from "./utils.js";
 
@@ -117,6 +118,10 @@ export async function checkForUpdates(
       ? `Update ${latestVersion} is available but currently ignored.`
       : `${ctx.appName} is up to date at ${currentVersion}.`;
 
+  const upstreamFixMatch = options.error && hasUpdate && highlights.length
+    ? matchChangelogToError(options.error, highlights)
+    : undefined;
+
   return {
     hasUpdate,
     currentVersion,
@@ -127,7 +132,8 @@ export async function checkForUpdates(
     compareUrl,
     checkedAt: now,
     ignored,
-    message
+    message,
+    upstreamFixMatch
   };
 }
 

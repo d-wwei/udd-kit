@@ -40,7 +40,9 @@ export async function collectIncidentContext(
     upstream: {
       currentVersion: base.upstream?.currentVersion ?? update?.currentVersion ?? base.appVersion,
       latestVersion: base.upstream?.latestVersion ?? update?.latestVersion,
-      hasUpdate: base.upstream?.hasUpdate ?? update?.hasUpdate
+      hasUpdate: base.upstream?.hasUpdate ?? update?.hasUpdate,
+      highlights: base.upstream?.highlights ?? update?.highlights ?? [],
+      releaseUrl: base.upstream?.releaseUrl ?? update?.releaseUrl
     }
   };
 }

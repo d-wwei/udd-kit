@@ -1,6 +1,7 @@
 import { readAuditRecords } from "./audit.js";
 import { checkForUpdates } from "./check.js";
 import { prepareContributionDraft, submitContribution } from "./contribution.js";
+import { UddEventBus } from "./events.js";
 import { prepareIssueDraft, submitIssue } from "./issue.js";
 import { loadManifest } from "./manifest.js";
 import { analyzeIncident, healIncident, planHealing } from "./self-heal.js";
@@ -15,7 +16,9 @@ import type {
   SubmitContributionOptions,
   SubmitIssueOptions,
   UddAdapter,
-  UpgradeManifest
+  UpgradeManifest,
+  WatchHandle,
+  WatchOptions
 } from "./types.js";
 import { resolveAdapterContext } from "./adapter.js";
 
@@ -28,15 +31,28 @@ export type RuntimeOptions = {
 export class UddRuntime {
   readonly cwd: string;
   readonly manifest: UpgradeManifest;
+  readonly events: UddEventBus;
 
-  constructor(options: { cwd: string; manifest: UpgradeManifest }) {
+  constructor(options: { cwd: string; manifest: UpgradeManifest; events?: UddEventBus }) {
     this.cwd = options.cwd;
     this.manifest = options.manifest;
+    this.events = options.events ?? new UddEventBus();
   }
 
   async check(adapter: UddAdapter, overrides: AdapterContextOverrides = {}) {
     const ctx = await resolveAdapterContext(adapter, overrides);
-    return checkForUpdates(ctx, this.manifest);
+    const result = await checkForUpdates(ctx, this.manifest, { error: ctx.error });
+    if (result.shouldNotify) {
+      this.events.emit("update:available", result);
+    }
+    if (result.upstreamFixMatch && ctx.error) {
+      this.events.emit("update:fixes-local-error", {
+        update: result,
+        match: result.upstreamFixMatch,
+        error: ctx.error
+      });
+    }
+    return result;
   }
 
   async prepareIssue(
@@ -45,7 +61,9 @@ export class UddRuntime {
   ) {
     const { confirm, ...overrides } = options;
     const ctx = await resolveAdapterContext(adapter, { ...overrides, confirm });
-    return prepareIssueDraft(ctx, this.manifest, options);
+    const draft = await prepareIssueDraft(ctx, this.manifest, options);
+    this.events.emit("issue:drafted", draft);
+    return draft;
   }
 
   async submitIssue(
@@ -66,7 +84,11 @@ export class UddRuntime {
   ) {
     const { confirm, ...overrides } = options;
     const ctx = await resolveAdapterContext(adapter, { ...overrides, confirm });
-    return prepareContributionDraft(ctx, this.manifest, options);
+    const draft = await prepareContributionDraft(ctx, this.manifest, options);
+    if (draft.changedFiles.length) {
+      this.events.emit("contribution:drafted", draft);
+    }
+    return draft;
   }
 
   async submitContribution(
@@ -108,7 +130,9 @@ export class UddRuntime {
   }
 
   async analyze(adapter: UddAdapter, options: HealOptions = {}) {
-    return analyzeIncident(adapter, this.manifest, options);
+    const diagnosis = await analyzeIncident(adapter, this.manifest, options);
+    this.events.emit("diagnosis:completed", diagnosis);
+    return diagnosis;
   }
 
   async planHeal(adapter: UddAdapter, options: HealOptions = {}) {
@@ -116,7 +140,66 @@ export class UddRuntime {
   }
 
   async heal(adapter: UddAdapter, options: HealOptions = {}) {
-    return healIncident(adapter, this.manifest, options);
+    let plan;
+    try {
+      plan = await planHealing(adapter, this.manifest, options);
+      this.events.emit("heal:started", plan);
+    } catch (err) {
+      this.events.emit("heal:failed", { error: err instanceof Error ? err : new Error(String(err)) });
+      throw err;
+    }
+    try {
+      const result = await healIncident(adapter, this.manifest, options);
+      this.events.emit("heal:completed", result);
+      return result;
+    } catch (err) {
+      this.events.emit("heal:failed", { error: err instanceof Error ? err : new Error(String(err)), plan });
+      throw err;
+    }
+  }
+
+  watch(adapter: UddAdapter, options: WatchOptions = {}): WatchHandle {
+    const intervalMs = options.intervalMs ?? 60_000;
+    const checkUpstream = options.checkUpstream ?? true;
+    const healOnError = options.healOnError ?? false;
+    let running = true;
+    let cycles = 0;
+
+    const tick = async () => {
+      if (!running) return;
+      cycles++;
+      this.events.emit("watch:tick", { ts: new Date().toISOString(), cycle: cycles });
+      try {
+        if (checkUpstream) {
+          await this.check(adapter);
+        }
+        const ctx = await resolveAdapterContext(adapter);
+        if (ctx.error && healOnError) {
+          await this.heal(adapter, options.healOptions);
+        } else if (ctx.error) {
+          await this.analyze(adapter);
+        }
+      } catch {
+        // watch loop absorbs errors; events are emitted by inner methods
+      }
+      if (options.maxCycles && cycles >= options.maxCycles) {
+        handle.stop();
+      }
+    };
+
+    const timer = setInterval(tick, intervalMs);
+    tick();
+
+    const handle: WatchHandle = {
+      stop: () => {
+        running = false;
+        clearInterval(timer);
+      },
+      get running() { return running; },
+      get cycles() { return cycles; }
+    };
+
+    return handle;
   }
 
   async getState(adapter: UddAdapter) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { checkForUpdates, ignoreUpdateVersion } from "./check.js";
@@ -15,6 +15,12 @@ async function main(): Promise<void> {
   const command = args[0];
   const options = parseFlags(args.slice(1));
   const cwd = options.cwd ? path.resolve(options.cwd) : process.cwd();
+
+  if (command === "init") {
+    await runInit(cwd, options);
+    return;
+  }
+
   const manifest = await loadManifest(cwd, options.manifest ?? "udd.config.json").catch(async () => {
     return loadManifest(cwd, options.manifest ?? "agent-upgrade.json");
   });
@@ -131,6 +137,153 @@ async function main(): Promise<void> {
   process.exitCode = 1;
 }
 
+async function runInit(cwd: string, options: Record<string, string>): Promise<void> {
+  const configPath = path.join(cwd, "udd.config.json");
+  try {
+    await readFile(configPath, "utf8");
+    if (options.force !== "true") {
+      console.error("udd.config.json already exists. Use --force to overwrite.");
+      process.exitCode = 1;
+      return;
+    }
+  } catch { /* does not exist, proceed */ }
+
+  let repo = options.repo ?? "";
+  let versionType = "package.json";
+  let versionPath = "./package.json";
+
+  if (!repo) {
+    try {
+      const pkg = JSON.parse(await readFile(path.join(cwd, "package.json"), "utf8")) as {
+        repository?: string | { url?: string };
+      };
+      const raw = typeof pkg.repository === "string" ? pkg.repository : pkg.repository?.url ?? "";
+      const match = raw.match(/github\.com[/:]([^/]+\/[^/.]+)/);
+      if (match) repo = match[1];
+    } catch { /* no package.json */ }
+  }
+
+  if (!repo) {
+    try {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const exec = promisify(execFile);
+      const { stdout } = await exec("git", ["remote", "get-url", "origin"], { cwd });
+      const match = stdout.trim().match(/github\.com[/:]([^/]+\/[^/.]+)/);
+      if (match) repo = match[1];
+    } catch { /* not a git repo or no remote */ }
+  }
+
+  try {
+    await readFile(path.join(cwd, "pyproject.toml"), "utf8");
+    versionType = "pyproject.toml";
+    versionPath = "./pyproject.toml";
+  } catch { /* not Python */ }
+
+  const config = {
+    $schemaVersion: 1,
+    repo: repo || "owner/repository",
+    releaseChannel: "releases",
+    currentVersionSource: { type: versionType, path: versionPath },
+    changelogSource: { type: "release_notes" },
+    updateInstructions: {
+      command: versionType === "package.json"
+        ? `npm install ${repo || "owner/repository"}@latest`
+        : `pip install --upgrade ${repo.split("/")[1] ?? "package"}`,
+      docsUrl: repo ? `https://github.com/${repo}#readme` : "https://github.com/owner/repository#readme"
+    },
+    selfHealing: {
+      enabled: true,
+      strategyOrder: ["agent_patch", "upstream_update", "issue_only"],
+      workspaceMode: "git_worktree",
+      approvalMode: "manual"
+    },
+    hooks: {
+      verification: [
+        { name: "test", command: versionType === "package.json" ? "npm test" : "python -m pytest" }
+      ]
+    }
+  };
+
+  await writeFile(configPath, JSON.stringify(config, null, 2) + "\n", "utf8");
+  console.log(`Created ${configPath}`);
+
+  if (!repo) {
+    console.log("  repo: owner/repository (edit this in udd.config.json)");
+  }
+
+  const productName = repo ? repo.split("/")[1] : path.basename(cwd);
+  const prompt = generateAgentPrompt(productName, cwd, config.repo);
+
+  const promptPath = options.out
+    ? path.resolve(cwd, options.out)
+    : undefined;
+
+  if (promptPath) {
+    await writeFile(promptPath, prompt, "utf8");
+    console.log(`\nAgent instructions written to ${promptPath}`);
+  } else {
+    console.log("\n--- Copy the following into your agent instructions (CLAUDE.md, AGENT_INSTRUCTIONS.md, etc.) ---\n");
+    console.log(prompt);
+    console.log("--- End of agent instructions ---");
+  }
+}
+
+function generateAgentPrompt(productName: string, productRoot: string, repo: string): string {
+  return `## Self-Healing Protocol (UDD)
+
+This project uses UDD Kit for self-healing. When you encounter a failure while using ${productName}, follow this protocol.
+
+### When to trigger
+
+- A tool or command from this product fails with an error
+- A previously working workflow stops working after an update
+- You see version mismatch, dependency, or compatibility errors
+
+### What to do
+
+**Spawn a separate subagent** to handle diagnosis and repair. Do NOT attempt UDD operations in your current context -- use an isolated subagent to avoid recursive dependency (you may be part of the product being repaired).
+
+The subagent should:
+
+1. **Check if upstream already fixed the problem:**
+\`\`\`bash
+cd ${productRoot} && udd check --json
+\`\`\`
+Read the JSON output. If \`hasUpdate\` is true and \`upstreamFixMatch\` is present with medium/high confidence, the upstream release likely fixes this error. Recommend the user to update.
+
+2. **If no upstream fix, analyze the error:**
+\`\`\`bash
+cd ${productRoot} && udd analyze --error "<the actual error message>" --json
+\`\`\`
+Report the \`kind\` (upstream_update, code_bug, config_error, dependency_drift) and suggested strategies.
+
+3. **If the user approves, attempt self-heal:**
+\`\`\`bash
+cd ${productRoot} && udd heal --error "<the actual error message>" --decision repair_once --json
+\`\`\`
+This runs in an isolated git worktree. If verification passes, the fix is ready for review.
+
+4. **If all else fails, draft an issue:**
+\`\`\`bash
+cd ${productRoot} && udd issue-draft --error "<the actual error message>" --out ./issue-draft.md
+\`\`\`
+Present the draft to the user before submission.
+
+### Semantic matching
+
+When analyzing whether an upstream changelog entry fixes the current error, use your own LLM judgment -- you are better at semantic matching than keyword overlap. Consider whether the changelog mentions the same component, error class, or failure pattern, even with different wording.
+
+### Rules
+
+- Always run UDD commands in a subagent, never in the main agent context
+- Never modify files outside ${productRoot}
+- Never commit to main/master directly
+- If \`udd.config.json\` is missing, tell the user to run \`udd init\`
+- Respect .env, secrets, and protectedPaths in udd.config.json
+`;
+}
+
 function parseFlags(args: string[]): Record<string, string> {
   const output: Record<string, string> = {};
   for (let i = 0; i < args.length; i += 1) {
@@ -161,17 +314,15 @@ function collectMultiFlags(args: string[], flag: string): string[] {
 function printUsage(): void {
   console.error([
     "Usage:",
-    "  udd check --manifest ./udd.config.json",
-    "  udd ignore --manifest ./udd.config.json --version 1.2.3",
-    "  udd analyze --manifest ./udd.config.json --error \"Request failed\"",
-    "  udd heal --manifest ./udd.config.json --error \"Request failed\" --decision repair_once",
-    "  udd state --manifest ./udd.config.json",
-    "  udd audit --manifest ./udd.config.json --limit 20",
-    "  udd issue-draft --manifest ./udd.config.json --error \"Request failed\" --log ./app.log",
-    "  udd contribute-draft --manifest ./udd.config.json --summary \"Fixed retry logic\"",
-    "",
-    "Compatibility aliases:",
-    "  agent-upgrade check --manifest ./agent-upgrade.json"
+    "  udd init [--repo owner/name] [--force]",
+    "  udd check [--manifest ./udd.config.json] [--json]",
+    "  udd ignore --version 1.2.3",
+    "  udd analyze --error \"Request failed\" [--json]",
+    "  udd heal --error \"Request failed\" --decision repair_once [--json]",
+    "  udd state [--json]",
+    "  udd audit [--limit 20] [--json]",
+    "  udd issue-draft --error \"Request failed\" [--out ./issue.md]",
+    "  udd contribute-draft --summary \"Fixed retry logic\" [--out ./pr.md]"
   ].join("\n"));
 }
 

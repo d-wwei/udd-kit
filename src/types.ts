@@ -2,6 +2,13 @@ export type ReleaseChannel = "releases" | "tags";
 export type ChangelogSourceType = "release_notes" | "changelog_file" | "compare_commits";
 export type VersionSourceType = "package.json" | "pyproject.toml" | "file" | "literal";
 export type ProblemKind = "code_bug" | "config_error" | "dependency_drift" | "upstream_update" | "unknown";
+
+export type UpstreamFixMatch = {
+  confidence: "low" | "medium" | "high";
+  score: number;
+  matchedHighlights: string[];
+  recommendation: string;
+};
 export type RepairStrategy = "agent_patch" | "upstream_update" | "host_native_fix" | "manual_update" | "issue_only";
 export type UpdateProviderKind = "update-kit" | "host-native" | "manual";
 export type UddDecision =
@@ -110,12 +117,21 @@ export type HostContext = {
     currentVersion?: string;
     latestVersion?: string;
     hasUpdate?: boolean;
+    highlights?: string[];
+    releaseUrl?: string;
   };
   confirm: (prompt: ConfirmationPrompt) => Promise<boolean>;
 };
 
 export type AdapterContextOverrides = Partial<Omit<HostContext, "confirm">> & {
   confirm?: HostContext["confirm"];
+};
+
+export type MatchUpstreamFixRequest = {
+  error: HostError;
+  highlights: string[];
+  releaseUrl?: string;
+  latestVersion?: string;
 };
 
 export type UddAdapter = {
@@ -126,6 +142,7 @@ export type UddAdapter = {
   invokeRepairAgent?: (request: RepairAgentRequest) => Promise<RepairAgentResult>;
   runHook?: (hook: HookDefinition, cwd: string) => Promise<HookExecutionResult>;
   getUpdateProviders?: () => Promise<UpdateProvider[]> | UpdateProvider[];
+  matchUpstreamFix?: (request: MatchUpstreamFixRequest) => Promise<UpstreamFixMatch | undefined>;
   readState?: () => Promise<UddPersistentState | undefined>;
   writeState?: (state: UddPersistentState) => Promise<void>;
   writeAudit?: (record: AuditRecord) => Promise<void>;
@@ -150,6 +167,7 @@ export type UpdateSummary = {
 export type UpdateCheckResult = UpdateSummary & {
   hasUpdate: boolean;
   message: string;
+  upstreamFixMatch?: UpstreamFixMatch;
 };
 
 export type DiagnosticsAttachment = {
@@ -191,6 +209,7 @@ export type CheckForUpdatesOptions = {
   cacheTtlMs?: number;
   fetchImpl?: typeof fetch;
   cachePath?: string;
+  error?: HostError;
 };
 
 export type PrepareIssueDraftOptions = {
@@ -245,6 +264,7 @@ export type Diagnosis = {
   summary: string;
   suggestedStrategies: RepairStrategy[];
   evidence: string[];
+  upstreamFixMatch?: UpstreamFixMatch;
 };
 
 export type UpdateRequest = {
@@ -356,6 +376,20 @@ export type HealOptions = AdapterContextOverrides & {
   createPr?: boolean;
 };
 
+export type WatchOptions = {
+  intervalMs?: number;
+  checkUpstream?: boolean;
+  healOnError?: boolean;
+  healOptions?: HealOptions;
+  maxCycles?: number;
+};
+
+export type WatchHandle = {
+  stop: () => void;
+  readonly running: boolean;
+  readonly cycles: number;
+};
+
 export type HealResult =
   | {
       status: "repaired";
@@ -366,6 +400,7 @@ export type HealResult =
       contribution: ContributionDraft;
       branchUrl?: string;
       prUrl?: string;
+      recommendation?: UpstreamFixMatch;
     }
   | {
       status: "escalated";
@@ -374,6 +409,7 @@ export type HealResult =
       diagnosis: Diagnosis;
       issueDraft: IssueDraft;
       issueUrl?: string;
+      recommendation?: UpstreamFixMatch;
     }
   | {
       status: "skipped";
@@ -381,4 +417,5 @@ export type HealResult =
       strategy: RepairStrategy;
       diagnosis: Diagnosis;
       manualUpdateSteps?: string[];
+      recommendation?: UpstreamFixMatch;
     };

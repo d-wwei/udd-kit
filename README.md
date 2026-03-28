@@ -2,234 +2,151 @@
 
 [中文说明](./README.zh-CN.md)
 
-`UDD Kit` is an embeddable runtime for **User-Directed Development**.
+**UDD Kit** is a self-healing runtime for AI agent ecosystems. It detects failures, matches them against upstream fixes, attempts automated repair, and contributes fixes back upstream.
 
-## Why This Exists
+UDD = **User-Directed Development** -- software evolution driven by users and their agents, not just company roadmaps.
 
-AI has given individuals powerful making capability. When we, as users, have a real need, we can increasingly build or adapt the solution locally instead of waiting for a company platform to filter, prioritize, and schedule it.
+## Quick Start (Agent Environment -- Recommended)
 
-We believe product evolution in the AI era will become increasingly user-directed. That is why `UDD Kit` exists.
+For products used by AI agents (Claude Code, Codex, etc.), integration is **zero code**:
 
-It helps turn each problem a user encounters into a closed-loop cycle:
+```bash
+npm install -g udd-kit
+cd /path/to/your/product
+udd init
+```
 
-- identify problems from real usage
-- diagnose what kind of problem this is
-- attempt local self-healing through an injected repair agent or update path
-- verify the result in a controlled workspace
-- send the outcome upstream as an issue or a PR
+`udd init` does two things:
+1. Generates `udd.config.json` (auto-detects repo, language, version source)
+2. Outputs a ready-to-use **Self-Healing Protocol** prompt -- copy it into your agent instructions (CLAUDE.md, AGENT_INSTRUCTIONS.md, system prompt, etc.)
 
-In UDD, users are not limited to reporting needs. Users, together with their agents, direct how software evolves.
+That's it. When the agent encounters a failure, it spawns a subagent to run UDD diagnostics and repair in isolation.
 
-## What UDD Means
+## Quick Start (Programmatic)
 
-Traditional software delivery is company-directed:
+For CI/CD, background monitors, or non-agent environments:
 
-1. users report pain
-2. the company filters and prioritizes
-3. the company decides what gets built
+```ts
+import { initUdd } from "udd-kit/quick";
 
-UDD changes the control point:
+const { runtime, adapter } = await initUdd({ name: "my-app" });
 
-1. users encounter a problem in context
-2. the host product and its agents collect evidence
-3. the system attempts a safe local repair or update
-4. successful fixes can flow back upstream as reusable improvements
+// Check if upstream already fixed your problem
+const check = await runtime.check(adapter);
+if (check.upstreamFixMatch) {
+  console.log(check.upstreamFixMatch.recommendation);
+}
 
-`UDD Kit` is the orchestration layer for that loop.
+// Subscribe to events
+runtime.events.on("update:fixes-local-error", ({ match, update }) => {
+  console.log(`Upstream ${update.latestVersion} fixes this: ${match.recommendation}`);
+});
+
+// Background health monitor
+runtime.watch(adapter, { intervalMs: 300_000 });
+```
 
 ## Core Loop
 
-`UDD Kit` is built around this self-healing and upstream contribution cycle:
+```
+Error occurs → Collect incident → Diagnose (LLM semantic match or text fallback)
+  → Select strategy → Repair in isolated worktree → Verify with hooks
+    → Success: submit PR upstream
+    → Failure: escalate as issue with redacted diagnostics
+```
 
-1. Collect the incident: error, logs, environment, git state, and upstream version state.
-2. Diagnose the incident and choose a repair strategy.
-3. Attempt repair through:
-   - a host-provided coding agent
-   - an optional `UpdateKit` provider
-   - a host-native update provider
-   - a manual update path
-4. Run verification hooks in an isolated workspace.
-5. If verification passes, prepare or submit a PR.
-6. If repair fails, escalate as an issue with redacted diagnostics.
+## Two Integration Paths
+
+| | Agent (Prompt) | Programmatic |
+|---|---|---|
+| How | `udd init` + paste prompt | `initUdd()` + adapter code |
+| Semantic matching | Agent's own LLM | Built-in text matching (or adapter override) |
+| Recursive dependency | Subagent isolation | N/A |
+| Best for | Products used by AI agents | CI/CD, cron jobs, web services |
 
 ## Architecture
 
-```mermaid
-flowchart LR
-  Host["Host App / Skill / Product"] --> Adapter["UDD Adapter"]
-  Adapter --> Runtime["UDD Runtime"]
-
-  Runtime --> Incident["Incident Collector"]
-  Runtime --> Diagnose["Diagnosis Engine"]
-  Runtime --> Policy["Policy Engine"]
-  Runtime --> Workspace["Workspace / Isolation"]
-  Runtime --> Verify["Verification Engine"]
-  Runtime --> Audit["Audit Log"]
-  Runtime --> State["State Store"]
-  Runtime --> Contrib["Contribution / PR Flow"]
-  Runtime --> Issue["Issue Escalation Flow"]
-
-  Diagnose --> Strategy["Strategy Selector"]
-
-  Strategy --> AgentRepair["Agent Repair Provider"]
-  Strategy --> UpdateBridge["Update Provider Bridge"]
-  Strategy --> ConfigRepair["Host Native Repair"]
-  Strategy --> Manual["Manual Update Guidance"]
-
-  UpdateBridge --> UK["UpdateKit Provider (optional)"]
-  UpdateBridge --> HN["Host Native Update Provider"]
-  UpdateBridge --> MU["Manual Update Provider"]
-
-  AgentRepair --> Workspace
-  ConfigRepair --> Workspace
-  UK --> Verify
-  HN --> Verify
-  MU --> Issue
-
-  Workspace --> Verify
-  Verify -->|pass| Contrib
-  Verify -->|fail| Rollback["Rollback / Cleanup"]
-  Rollback --> Issue
+```
+Host Product ──→ UDD Adapter ──→ UDD Runtime
+                                    ├── Incident Collector
+                                    ├── Diagnosis Engine (+ changelog-error matching)
+                                    ├── Strategy Selector
+                                    ├── Repair Agent / Update Provider
+                                    ├── Verification Engine (hooks)
+                                    ├── Contribution Flow (PR)
+                                    ├── Issue Escalation Flow
+                                    ├── Event Bus
+                                    ├── State Store
+                                    └── Audit Log
 ```
 
-## Main Capabilities
+## Key Features
 
-- Incident collection: gather error context, logs, environment metadata, git state, and version state.
-- Diagnosis: classify failures and choose a repair strategy.
-- Local self-healing: call a host-provided repair agent to modify code in an isolated workspace.
-- Update bridge: prefer `UpdateKit` when available, otherwise fall back to host-native or manual update paths.
-- Verification: run preflight, test, smoke, and compatibility hooks before promotion.
-- Upstream contribution: draft or submit issues and PRs with redacted diagnostics and structured context.
-- State and audit: persist decisions, ignored versions, last heal results, and audit records.
-
-## Why GitHub Update Detection Still Exists
-
-GitHub update detection is still part of `UDD Kit`, but it is now a **supporting signal**, not the product's headline purpose.
-
-It stays because it serves four important roles:
-
-1. It helps diagnosis decide whether a problem is better solved by an upstream update than by patching local code.
-2. It powers the optional update strategy when a host has `UpdateKit` or another update provider.
-3. It gives hosts without `UpdateKit` a minimal fallback path: detect upstream change and guide the user to fetch or upgrade manually.
-4. It remains useful on its own for hosts that only want awareness and policy decisions around upstream drift.
-
-So the right framing is:
-
-- `UDD Kit` is primarily about **problem recognition, local self-healing, and upstream contribution**
-- upstream version checks are one diagnostic input and one possible repair path inside that broader loop
-
-## Install
-
-```bash
-npm install udd-kit
-```
-
-## Config
-
-Default manifest file:
-
-- `udd.config.json`
-
-Legacy compatible file name:
-
-- `agent-upgrade.json`
-
-Start from:
-
-- [udd.config.example.json](./udd.config.example.json)
-- [agent-upgrade.example.json](./agent-upgrade.example.json)
-
-## Minimal Example
-
-```ts
-import { defineAdapter } from "udd-kit/adapter";
-import { createRuntime } from "udd-kit/runtime";
-
-const adapter = defineAdapter({
-  name: "my-host",
-  async getContext() {
-    return {
-      cwd: process.cwd(),
-      appName: "my-host",
-      logs: ["./logs/latest.log"],
-      error: {
-        message: "dependency mismatch during startup"
-      },
-      confirm: async () => true
-    };
-  },
-  async decide(prompt) {
-    if (prompt.kind === "update") return "update_once";
-    return "repair_once";
-  },
-  async invokeRepairAgent(request) {
-    return {
-      ok: true,
-      summary: "patched the failing workflow",
-      changedFiles: ["src/fix.ts"]
-    };
-  }
-});
-
-const runtime = await createRuntime({ cwd: process.cwd() });
-const result = await runtime.heal(adapter);
-
-console.log(result.status);
-```
+- **Changelog-error matching**: Compares local errors against upstream release notes to detect if your problem is already fixed upstream. Uses adapter-provided LLM semantic matching in agent environments, with deterministic text matching as fallback.
+- **Self-healing loop**: Diagnose → strategy → repair → verify → contribute/escalate, fully automated.
+- **Isolated repair**: All repairs happen in git worktrees. Verification must pass before promotion.
+- **Event system**: Subscribe to `update:available`, `update:fixes-local-error`, `heal:completed`, etc.
+- **Watch mode**: `runtime.watch()` for background health monitoring with event-driven notifications.
+- **Privacy-aware**: Redacts tokens, secrets, and absolute paths before creating issues or PRs.
+- **Zero runtime dependencies**: Built entirely on Node.js built-ins.
 
 ## CLI
 
-The self-healing loop is now the primary CLI surface:
-
 ```bash
-udd analyze --manifest ./udd.config.json --error "Request failed"
-udd heal --manifest ./udd.config.json --error "Request failed" --decision repair_once
-udd state --manifest ./udd.config.json
-udd audit --manifest ./udd.config.json --limit 20
+udd init [--repo owner/name] [--force]       # Generate config + agent prompt
+udd check [--json]                            # Check upstream for updates
+udd analyze --error "msg" [--json]            # Diagnose an error
+udd heal --error "msg" --decision repair_once # Full self-heal loop
+udd issue-draft --error "msg" [--out f.md]    # Draft an issue
+udd contribute-draft --summary "fix" [--out]  # Draft a contribution
+udd state [--json]                            # View persisted state
+udd audit [--limit 20] [--json]              # View audit records
 ```
 
-Supporting commands remain available:
+## Runtime API
 
-```bash
-udd check --manifest ./udd.config.json
-udd issue-draft --manifest ./udd.config.json --error "Request failed" --log ./logs/latest.log
-udd contribute-draft --manifest ./udd.config.json --summary "Fixed retry loop"
-udd ignore --manifest ./udd.config.json --version 1.2.3
+```ts
+runtime.check(adapter)           // Check upstream + changelog-error matching
+runtime.analyze(adapter)         // Diagnose an incident
+runtime.planHeal(adapter)        // Preview the healing plan
+runtime.heal(adapter)            // Execute full self-healing loop
+runtime.watch(adapter, options)  // Background health monitor
+runtime.events.on(event, fn)     // Subscribe to events
+runtime.getState(adapter)        // Read persisted state
+runtime.getAudit(adapter)        // Read audit records
 ```
 
-Legacy alias:
+## Adapter Interface
 
-```bash
-agent-upgrade check --manifest ./agent-upgrade.json
+The adapter translates your host environment into UDD's context. All methods except `getContext` are optional:
+
+```ts
+import { defineAdapter } from "udd-kit/adapter";
+
+const adapter = defineAdapter({
+  name: "my-app",
+  getContext: () => ({ cwd, appName, error, confirm }),
+
+  // Optional: LLM-powered semantic matching (agent environments)
+  matchUpstreamFix: (req) => /* compare req.error with req.highlights */,
+
+  // Optional: let an agent repair code in isolated worktree
+  invokeRepairAgent: (req) => /* return { ok, summary, changedFiles } */,
+
+  // Optional: provide update strategies
+  getUpdateProviders: () => [/* update-kit, host-native, manual */],
+
+  // Optional: custom decision logic
+  decide: (prompt) => /* return UddDecision */,
+});
 ```
 
-## Public Runtime APIs
+## Documentation
 
-- `runtime.analyze(adapter)`
-  Diagnose an incident and suggest repair strategies.
-- `runtime.planHeal(adapter)`
-  Produce a healing plan, including strategy and optional update provider selection.
-- `runtime.heal(adapter)`
-  Execute the full self-healing loop and return `repaired`, `escalated`, or `skipped`.
-- `runtime.getState(adapter)` / `runtime.getAudit(adapter)`
-  Read persisted state and audit records.
-- `runtime.check(adapter)`
-  Inspect upstream version drift when the host needs it.
-
-## Design Philosophy
-
+- [Integration Guide](./docs/INTEGRATION.md) -- Programmatic integration details
+- [Agent Instructions Template](./docs/AGENT_INSTRUCTIONS.md) -- Prompt integration reference
 - [UDD Design Philosophy (Chinese)](./docs/UDD-DESIGN-PHILOSOPHY.zh-CN.md)
 
-The design argument behind `UDD Kit` is simple:
+## License
 
-> software should evolve from "users report, companies decide" to "users direct, agents execute, platforms govern the boundary"
-
-## Integration Guide
-
-- [Integration Guide](./docs/INTEGRATION.md)
-
-## Notes
-
-- GitHub write operations still require an explicit host decision path.
-- Audit and state files are intended to remain local host artifacts and are filtered from contribution drafts.
-- New capabilities should keep evolving through `runtime`, manifest, and adapter boundaries rather than forcing host rewrites.
+MIT
