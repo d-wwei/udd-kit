@@ -6,6 +6,27 @@
 
 UDD = **User-Directed Development** -- software evolution driven by users and their agents, not just company roadmaps.
 
+## Why We Build This
+
+The traditional software model works like this: users report pain, companies filter and prioritize, companies decide what gets built. Users have voice but no agency.
+
+AI has changed the equation. With coding agents, every user now has the power to build and adapt software locally -- instantly, without waiting for a company's roadmap. This is not just a productivity boost; it's a fundamental shift in who controls how software evolves.
+
+We call this shift **User-Directed Development (UDD)**:
+
+1. Users encounter a problem in their own context
+2. Their agents collect evidence and attempt a safe local repair
+3. Successful fixes flow back upstream as reusable improvements
+4. Software evolves from the edges, not just from the center
+
+But this loop doesn't close itself. When a user's agent fixes something locally, that knowledge stays local. When upstream releases a fix, users don't know it addresses their problem. When a repair breaks something, there's no rollback. When a fix is valuable, there's no path to contribute it back.
+
+**UDD Kit is the orchestration layer that closes this loop.** It connects failure detection, upstream awareness, local repair, verification, and upstream contribution into a single automated cycle.
+
+> *"Software should evolve from 'users report, companies decide' to 'users direct, agents execute, platforms govern the boundary.'"*
+
+Read more: [The Future of Software: From User-Centric to User-Directed Development (LinkedIn)](https://www.linkedin.com/pulse/future-software-from-user-centric-user-directed-development-eli-wang-ucx8c/)
+
 ## Quick Start (Agent Environment -- Recommended)
 
 For products used by AI agents (Claude Code, Codex, etc.), integration is **zero code**:
