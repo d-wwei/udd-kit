@@ -232,15 +232,24 @@ async function runInit(cwd: string, options: Record<string, string>): Promise<vo
 function generateAgentPrompt(productName: string, productRoot: string, repo: string): string {
   return `## Self-Healing Protocol (UDD)
 
-This project uses UDD Kit for self-healing. When you encounter a failure while using ${productName}, follow this protocol.
+This project uses UDD Kit for self-healing and proactive health monitoring.
 
-### When to trigger
+### Proactive monitoring (on session start)
 
-- A tool or command from this product fails with an error
-- A previously working workflow stops working after an update
+At the start of each session, spawn a subagent to run a health check:
+\`\`\`bash
+cd ${productRoot} && udd check --json
+\`\`\`
+- If \`hasUpdate\` is true, inform the user: "${productName} has a new version available."
+- If \`upstreamFixMatch\` is present, highlight it: "Upstream may have fixed [issue]. Consider updating."
+- If no updates, proceed silently.
+
+### Reactive self-healing (on error)
+
+When you encounter a failure while using ${productName}:
+- A tool or command fails with an error
+- A previously working workflow stops working
 - You see version mismatch, dependency, or compatibility errors
-
-### What to do
 
 **Spawn a separate subagent** to handle diagnosis and repair. Do NOT attempt UDD operations in your current context -- use an isolated subagent to avoid recursive dependency (you may be part of the product being repaired).
 

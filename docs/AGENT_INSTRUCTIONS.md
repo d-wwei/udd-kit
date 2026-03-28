@@ -12,15 +12,24 @@
 
 ## Self-Healing Protocol (UDD)
 
-This project uses UDD Kit for self-healing. When you encounter a failure while using this product, follow this protocol:
+This project uses UDD Kit for self-healing and proactive health monitoring.
 
-### When to trigger
+### Proactive monitoring (on session start)
 
-- A tool or command from this product fails with an error
-- A previously working workflow stops working after an update
+At the start of each session, spawn a subagent to run a health check:
+```bash
+cd {{PRODUCT_ROOT}} && udd check --json
+```
+- If `hasUpdate` is true, inform the user: "This product has a new version available."
+- If `upstreamFixMatch` is present, highlight it: "Upstream may have fixed [issue]. Consider updating."
+- If no updates, proceed silently.
+
+### Reactive self-healing (on error)
+
+When you encounter a failure while using this product:
+- A tool or command fails with an error
+- A previously working workflow stops working
 - You see version mismatch, dependency, or compatibility errors
-
-### What to do
 
 **Spawn a separate subagent** to handle diagnosis and repair. Do NOT attempt UDD operations in your current context -- use an isolated subagent to avoid recursive dependency (you may be part of the product being repaired).
 
@@ -98,8 +107,8 @@ Report your confidence as high/medium/low.
 ## 什么时候仍然需要代码集成
 
 - CI/CD 管道（没有 agent 在运行）
-- 后台定时健康检查（`runtime.watch()`）
-- 需要程序化处理事件的场景
+- 需要 7x24 不间断的后台监控（agent 会话之间的间隙）
+- 需要程序化处理事件的场景（如转发通知到 Slack/飞书）
 - 嵌入到 Web 服务的中间件
 
 这些场景用 `initUdd()` programmatic API。
