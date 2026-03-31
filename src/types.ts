@@ -53,6 +53,7 @@ export type UpgradeManifest = {
     protectedPaths?: string[];
     maxChangedFiles?: number;
   };
+  contribute?: ContributeConfig;
   privacyRules?: {
     redactPatterns?: string[];
     excludePaths?: string[];
@@ -353,7 +354,9 @@ export type AuditRecord = {
     | "verification_completed"
     | "rollback_completed"
     | "pr_created"
-    | "issue_created";
+    | "issue_created"
+    | "contribution_pushed"
+    | "contribution_pr_created";
   status: "ok" | "failed" | "skipped";
   message: string;
   metadata?: Record<string, unknown>;
@@ -375,6 +378,59 @@ export type HealOptions = AdapterContextOverrides & {
   submitIssueOnEscalation?: boolean;
   createPr?: boolean;
 };
+
+export type ContributeStrategy = "direct_push" | "pull_request";
+
+export type ContributeConfig = {
+  /** Default target branch (default: "main") */
+  defaultTarget?: string;
+  /** Push strategy: direct_push or pull_request (default: "direct_push") */
+  strategy?: ContributeStrategy;
+  /** Run verification hooks before pushing (default: true) */
+  requireVerification?: boolean;
+};
+
+export type ContributeOptions = {
+  /** Commit message (auto-generated from diff if omitted) */
+  message?: string;
+  /** Override push strategy for this invocation */
+  strategy?: ContributeStrategy;
+  /** Target branch (overrides config) */
+  target?: string;
+  /** GitHub auth for PR creation */
+  auth?: GithubAuth;
+  /** Skip verification hooks */
+  skipVerification?: boolean;
+  /** Git remote name (default: "origin") */
+  remoteName?: string;
+  /** Custom exec function (for testing) */
+  exec?: (cmd: string[], cwd: string) => Promise<string>;
+};
+
+export type ContributeResult =
+  | {
+      status: "pushed";
+      branch: string;
+      commitHash: string;
+      summary: string;
+      changedFiles: string[];
+      verification?: VerificationResult;
+    }
+  | {
+      status: "pr_created";
+      branch: string;
+      commitHash: string;
+      prUrl: string;
+      summary: string;
+      changedFiles: string[];
+      verification?: VerificationResult;
+    }
+  | {
+      status: "blocked";
+      reason: string;
+      changedFiles: string[];
+      verification?: VerificationResult;
+    };
 
 export type WatchOptions = {
   intervalMs?: number;

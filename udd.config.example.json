@@ -45,6 +45,11 @@
       "*.pem"
     ]
   },
+  "contribute": {
+    "defaultTarget": "main",
+    "strategy": "direct_push",
+    "requireVerification": true
+  },
   "selfHealing": {
     "enabled": true,
     "strategyOrder": [

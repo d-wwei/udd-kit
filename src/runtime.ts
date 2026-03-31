@@ -1,5 +1,6 @@
 import { readAuditRecords } from "./audit.js";
 import { checkForUpdates } from "./check.js";
+import { contribute as contributeFlow } from "./contribute.js";
 import { prepareContributionDraft, submitContribution } from "./contribution.js";
 import { UddEventBus } from "./events.js";
 import { prepareIssueDraft, submitIssue } from "./issue.js";
@@ -8,6 +9,7 @@ import { analyzeIncident, healIncident, planHealing } from "./self-heal.js";
 import { readPersistentState } from "./state.js";
 import type {
   AdapterContextOverrides,
+  ContributeOptions,
   GithubAuth,
   HealOptions,
   HealthLoopHooks,
@@ -200,6 +202,28 @@ export class UddRuntime {
     };
 
     return handle;
+  }
+
+  async contribute(adapter: UddAdapter, options: ContributeOptions & AdapterContextOverrides = {}) {
+    const { confirm, ...overrides } = options;
+    const ctx = await resolveAdapterContext(adapter, { ...overrides, confirm });
+    const result = await contributeFlow(adapter, this.manifest, ctx, options);
+    if (result.status === "pushed" || result.status === "pr_created") {
+      this.events.emit("contribution:drafted", {
+        owner: "",
+        repo: this.manifest.repo,
+        allowed: true,
+        blockedReasons: [],
+        branchName: result.branch,
+        commitMessage: options.message ?? "",
+        prTitle: "",
+        prBody: "",
+        diffStat: "",
+        changedFiles: result.changedFiles,
+        patchPreview: ""
+      });
+    }
+    return result;
   }
 
   async getState(adapter: UddAdapter) {

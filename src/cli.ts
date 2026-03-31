@@ -3,12 +3,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { checkForUpdates, ignoreUpdateVersion } from "./check.js";
+import { contribute } from "./contribute.js";
 import { prepareContributionDraft } from "./contribution.js";
 import { prepareIssueDraft } from "./issue.js";
 import { defineAdapter } from "./adapter.js";
 import { loadManifest } from "./manifest.js";
 import { createRuntime } from "./runtime.js";
-import type { HostContext, UddDecision } from "./types.js";
+import type { ContributeStrategy, HostContext, UddDecision } from "./types.js";
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -96,6 +97,20 @@ async function main(): Promise<void> {
     if (options.out) {
       await writeFile(path.resolve(cwd, options.out), draft.prBody, "utf8");
     }
+    return;
+  }
+
+  if (command === "contribute") {
+    const strategy = (options.strategy ?? options.pr === "true" ? "pull_request" : undefined) as ContributeStrategy | undefined;
+    const result = await contribute(adapter, manifest, ctx, {
+      message: options.message ?? options.m,
+      strategy,
+      target: options.target,
+      auth: options["github-token"] ? { token: options["github-token"] } : undefined,
+      remoteName: options.remote,
+      skipVerification: options["skip-verification"] === "true"
+    });
+    printOutput(result, options);
     return;
   }
 
@@ -283,11 +298,32 @@ Present the draft to the user before submission.
 
 When analyzing whether an upstream changelog entry fixes the current error, use your own LLM judgment -- you are better at semantic matching than keyword overlap. Consider whether the changelog mentions the same component, error class, or failure pattern, even with different wording.
 
+### Proactive contribution (local improvements)
+
+When you have made local improvements (bug fixes, enhancements, new features) and the user wants to push them upstream:
+
+1. **Direct push to target branch:**
+\`\`\`bash
+cd ${productRoot} && udd contribute --message "fix: description of changes"
+\`\`\`
+
+2. **Create a pull request instead:**
+\`\`\`bash
+cd ${productRoot} && udd contribute --message "feat: description" --strategy pull_request --github-token \${GITHUB_TOKEN}
+\`\`\`
+
+3. **Skip verification if needed:**
+\`\`\`bash
+cd ${productRoot} && udd contribute --message "chore: quick fix" --skip-verification
+\`\`\`
+
+The contribute command will: detect local changes → run verification hooks → commit → push (direct or PR). If verification fails, the push is blocked.
+
 ### Rules
 
 - Always run UDD commands in a subagent, never in the main agent context
 - Never modify files outside ${productRoot}
-- Never commit to main/master directly
+- Never commit to main/master directly (unless contribute strategy is direct_push and target is explicitly set)
 - If \`udd.config.json\` is missing, tell the user to run \`udd init\`
 - Respect .env, secrets, and protectedPaths in udd.config.json
 `;
@@ -331,6 +367,7 @@ function printUsage(): void {
     "  udd state [--json]",
     "  udd audit [--limit 20] [--json]",
     "  udd issue-draft --error \"Request failed\" [--out ./issue.md]",
+    "  udd contribute --message \"fix: token auth\" [--strategy direct_push|pull_request] [--target main]",
     "  udd contribute-draft --summary \"Fixed retry logic\" [--out ./pr.md]"
   ].join("\n"));
 }
