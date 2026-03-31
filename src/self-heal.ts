@@ -1,3 +1,4 @@
+import { contribute as contributeFlow } from "./contribute.js";
 import { prepareContributionDraft, submitContribution } from "./contribution.js";
 import { prepareIssueDraft, submitIssue } from "./issue.js";
 import { writeAuditRecord } from "./audit.js";
@@ -10,6 +11,7 @@ import { selectRepairStrategy } from "./strategy.js";
 import { buildUpdateRequest, planUpdateProvider, resolveUpdateProvider } from "./update-bridge.js";
 import { runVerification } from "./verify.js";
 import { createWorkspace } from "./workspace.js";
+import { defineAdapter } from "./adapter.js";
 import type {
   Diagnosis,
   HealOptions,
@@ -387,6 +389,30 @@ export async function healIncident(
       fromVersion: incident.upstream?.currentVersion,
       toVersion: plan.updateTargetVersion
     });
+    // Auto-contribute after successful heal (if configured)
+    if (manifest.contribute?.autoContributeAfterHeal && !prUrl && !branchUrl) {
+      try {
+        const healAdapter = defineAdapter({
+          name: `${adapter.name}-auto-contribute`,
+          async getContext() { return workspaceContext; },
+          async decide() { return "repair_once"; }
+        });
+        const contributeResult = await contributeFlow(healAdapter, manifest, workspaceContext, {
+          message: `fix(auto-heal): ${contribution.prTitle}`,
+          auth: options.auth,
+          skipVerification: true  // already verified above
+        });
+        if (contributeResult.status === "pr_created") {
+          prUrl = contributeResult.prUrl;
+          branchUrl = undefined;
+        } else if (contributeResult.status === "pushed") {
+          branchUrl = undefined;
+        }
+      } catch {
+        // Auto-contribute is best-effort; don't fail the heal
+      }
+    }
+
     await persistState(adapter, manifest, incident, state, {
       lastHeal: {
         status: "repaired",

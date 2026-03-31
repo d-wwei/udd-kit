@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { checkForUpdates, ignoreUpdateVersion } from "./check.js";
-import { contribute } from "./contribute.js";
+import { contribute, detectIdentity } from "./contribute.js";
 import { prepareContributionDraft } from "./contribution.js";
 import { prepareIssueDraft } from "./issue.js";
 import { defineAdapter } from "./adapter.js";
@@ -97,6 +97,12 @@ async function main(): Promise<void> {
     if (options.out) {
       await writeFile(path.resolve(cwd, options.out), draft.prBody, "utf8");
     }
+    return;
+  }
+
+  if (command === "identity") {
+    const result = await detectIdentity(cwd, manifest, options.remote);
+    printOutput(result, options);
     return;
   }
 
@@ -300,24 +306,39 @@ When analyzing whether an upstream changelog entry fixes the current error, use 
 
 ### Proactive contribution (local improvements)
 
-When you have made local improvements (bug fixes, enhancements, new features) and the user wants to push them upstream:
+When you have made local improvements (bug fixes, enhancements, new features) and want to push them upstream:
 
-1. **Direct push to target branch:**
+1. **Auto-detect identity and strategy (recommended):**
+\`\`\`bash
+cd ${productRoot} && udd identity --json
+cd ${productRoot} && udd contribute --message "fix: description" --strategy auto --github-token \${GITHUB_TOKEN}
+\`\`\`
+With \`--strategy auto\`, UDD Kit detects whether you are the repo owner or an external contributor:
+- **Owner** (origin matches upstream): direct push to target branch
+- **External** (origin is a fork): create PR against upstream repo
+
+2. **Direct push to target branch (owner only):**
 \`\`\`bash
 cd ${productRoot} && udd contribute --message "fix: description of changes"
 \`\`\`
 
-2. **Create a pull request instead:**
+3. **Create a pull request (external contributor):**
 \`\`\`bash
 cd ${productRoot} && udd contribute --message "feat: description" --strategy pull_request --github-token \${GITHUB_TOKEN}
 \`\`\`
 
-3. **Skip verification if needed:**
+4. **Skip verification if needed:**
 \`\`\`bash
 cd ${productRoot} && udd contribute --message "chore: quick fix" --skip-verification
 \`\`\`
 
-The contribute command will: detect local changes → run verification hooks → commit → push (direct or PR). If verification fails, the push is blocked.
+The contribute command will: detect identity → detect local changes → run verification hooks → commit → push (direct or PR). If verification fails, the push is blocked.
+
+### Auto-contribute after self-heal
+
+If \`contribute.autoContributeAfterHeal\` is true in \`udd.config.json\`, successful self-heal repairs are automatically contributed back upstream. The strategy (direct_push vs pull_request) is determined by identity detection:
+- Owner agents: direct push fixes to main
+- External agents: create PRs for the upstream maintainer to review
 
 ### Rules
 
@@ -367,7 +388,8 @@ function printUsage(): void {
     "  udd state [--json]",
     "  udd audit [--limit 20] [--json]",
     "  udd issue-draft --error \"Request failed\" [--out ./issue.md]",
-    "  udd contribute --message \"fix: token auth\" [--strategy direct_push|pull_request] [--target main]",
+    "  udd identity [--remote origin] [--json]          Detect owner vs external contributor",
+    "  udd contribute --message \"fix: token auth\" [--strategy direct_push|pull_request|auto] [--target main]",
     "  udd contribute-draft --summary \"Fixed retry logic\" [--out ./pr.md]"
   ].join("\n"));
 }

@@ -379,15 +379,25 @@ export type HealOptions = AdapterContextOverrides & {
   createPr?: boolean;
 };
 
-export type ContributeStrategy = "direct_push" | "pull_request";
+export type ContributeStrategy = "direct_push" | "pull_request" | "auto";
+
+export type ContributeIdentity = "owner" | "external" | "unknown";
 
 export type ContributeConfig = {
   /** Default target branch (default: "main") */
   defaultTarget?: string;
-  /** Push strategy: direct_push or pull_request (default: "direct_push") */
+  /** Push strategy: direct_push, pull_request, or auto (default: "direct_push").
+   *  "auto" detects ownership by comparing git remote origin with upstream repo:
+   *  - If origin matches upstream → owner → direct_push
+   *  - If origin differs (fork) → external → pull_request */
   strategy?: ContributeStrategy;
   /** Run verification hooks before pushing (default: true) */
   requireVerification?: boolean;
+  /** Upstream repo (owner/name) for external contributors to create PRs against.
+   *  If omitted, defaults to manifest.repo. */
+  upstream?: string;
+  /** Auto-trigger contribute after a successful self-heal (default: false) */
+  autoContributeAfterHeal?: boolean;
 };
 
 export type ContributeOptions = {
@@ -403,6 +413,8 @@ export type ContributeOptions = {
   skipVerification?: boolean;
   /** Git remote name (default: "origin") */
   remoteName?: string;
+  /** Upstream remote name for PRs (default: "upstream", auto-added if needed) */
+  upstreamRemoteName?: string;
   /** Custom exec function (for testing) */
   exec?: (cmd: string[], cwd: string) => Promise<string>;
 };

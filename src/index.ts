@@ -1,7 +1,7 @@
 export { loadManifest } from "./manifest.js";
 export { checkForUpdates, detectCurrentVersion, ignoreUpdateVersion } from "./check.js";
 export { prepareIssueDraft, submitIssue } from "./issue.js";
-export { contribute } from "./contribute.js";
+export { contribute, detectIdentity } from "./contribute.js";
 export { prepareContributionDraft, submitContribution } from "./contribution.js";
 export { defineAdapter, resolveAdapterContext } from "./adapter.js";
 export { UddRuntime, createRuntime } from "./runtime.js";
