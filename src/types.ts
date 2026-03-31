@@ -398,6 +398,11 @@ export type ContributeConfig = {
   upstream?: string;
   /** Auto-trigger contribute after a successful self-heal (default: false) */
   autoContributeAfterHeal?: boolean;
+  /** Shared GitHub token (fine-grained PAT) for creating PRs on upstream repo.
+   *  Repo owners can embed a scoped token here so that all users (including
+   *  external contributors) can auto-create PRs without their own token.
+   *  Recommended scope: Pull requests (Write) on the target repo only. */
+  githubToken?: string;
 };
 
 export type ContributeOptions = {

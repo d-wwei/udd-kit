@@ -161,6 +161,11 @@ export async function contribute(
   const remoteName = options.remoteName ?? "origin";
   const upstreamRemoteName = options.upstreamRemoteName ?? "upstream";
 
+  // Resolve auth: explicit option > config githubToken > env variable
+  const auth = options.auth
+    ?? (manifest.contribute?.githubToken ? { token: manifest.contribute.githubToken } : undefined)
+    ?? (process.env.GITHUB_TOKEN ? { token: process.env.GITHUB_TOKEN } : undefined);
+
   // 1. Detect changes
   const changedFiles = await detectChanges(cwd, manifest, exec);
   if (!changedFiles.length) {
@@ -253,7 +258,7 @@ export async function contribute(
   await git(["push", "-u", remoteName, branchName], cwd, exec);
 
   let prUrl: string | undefined;
-  if (options.auth) {
+  if (auth) {
     if (resolved.identity === "external" && resolved.originRepo) {
       // External contributor: ensure upstream remote exists, create cross-repo PR
       await ensureUpstreamRemote(cwd, upstreamRepo, upstreamRemoteName, exec);
@@ -266,7 +271,7 @@ export async function contribute(
           head: `${forkOwner}:${branchName}`,
           base: target
         },
-        options.auth,
+        auth,
         fetch
       );
       prUrl = pr.html_url;
@@ -280,7 +285,7 @@ export async function contribute(
           head: branchName,
           base: target
         },
-        options.auth,
+        auth,
         fetch
       );
       prUrl = pr.html_url;
