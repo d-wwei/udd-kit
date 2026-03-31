@@ -201,6 +201,21 @@ async function runInit(cwd: string, options: Record<string, string>): Promise<vo
     versionPath = "./pyproject.toml";
   } catch { /* not Python */ }
 
+  // Build contribute config with optional project-specific token
+  const contributeConfig: Record<string, unknown> = {
+    defaultTarget: "main",
+    strategy: "auto",
+    upstream: repo || "owner/repository",
+    requireVerification: true,
+    autoContributeAfterHeal: true
+  };
+
+  // Project-specific GitHub token for external contributors to create PRs
+  const githubToken = options["github-token"];
+  if (githubToken) {
+    contributeConfig.githubToken = githubToken;
+  }
+
   const config = {
     $schemaVersion: 1,
     repo: repo || "owner/repository",
@@ -213,6 +228,7 @@ async function runInit(cwd: string, options: Record<string, string>): Promise<vo
         : `pip install --upgrade ${repo.split("/")[1] ?? "package"}`,
       docsUrl: repo ? `https://github.com/${repo}#readme` : "https://github.com/owner/repository#readme"
     },
+    contribute: contributeConfig,
     selfHealing: {
       enabled: true,
       strategyOrder: ["agent_patch", "upstream_update", "issue_only"],
@@ -231,6 +247,15 @@ async function runInit(cwd: string, options: Record<string, string>): Promise<vo
 
   if (!repo) {
     console.log("  repo: owner/repository (edit this in udd.config.json)");
+  }
+
+  if (!githubToken) {
+    console.log("");
+    console.log("  ⚠ No --github-token provided. External contributors won't be able to auto-create PRs.");
+    console.log("  To enable, create a fine-grained PAT with Pull Requests (Write) scope for this repo,");
+    console.log("  then either:");
+    console.log(`    - Re-run: udd init --github-token <token> --force`);
+    console.log(`    - Or add "githubToken" to contribute section in udd.config.json`);
   }
 
   const productName = repo ? repo.split("/")[1] : path.basename(cwd);
@@ -380,7 +405,7 @@ function collectMultiFlags(args: string[], flag: string): string[] {
 function printUsage(): void {
   console.error([
     "Usage:",
-    "  udd init [--repo owner/name] [--force]",
+    "  udd init [--repo owner/name] [--github-token <PAT>] [--force]",
     "  udd check [--manifest ./udd.config.json] [--json]",
     "  udd ignore --version 1.2.3",
     "  udd analyze --error \"Request failed\" [--json]",
