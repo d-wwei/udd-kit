@@ -1,4 +1,4 @@
 node_modules/
-dist/
+# dist/ — committed for GitHub dependency support; re-add after npm publish
 .DS_Store
 .udd/
